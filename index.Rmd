@@ -1,0 +1,244 @@
+---
+title: "Datos de cantones de Costa Rica - flexdashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: readable
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r paquetes}
+# Carga de paquetes
+library(sf)
+library(DT)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(stringi)
+library(dplyr)
+library(readxl)
+```
+
+```{r datos-cantones, message=FALSE, warning=FALSE}
+cantones <-
+  st_read(dsn = "cantones_simplificados.geojson", quiet = TRUE) %>%
+  st_transform(4326)
+```
+
+```{r datos-delitos, message=FALSE, warning=FALSE}
+estadisticas_policiales <- read_xls(path="estadisticaspoliciales2021.xls")
+estadisticas_policiales=subset(estadisticas_policiales, select=c("Delito", "Fecha", "Victima", "Edad", "Genero", "Provincia", "Canton"))
+```
+
+
+Column {data-width=150}
+-----------------------------------------------------------------------
+
+### Mapa con leaflet de coropletas
+**Fuente de los datos: [Instituto Geográfico Nacional (IGN)](https://www.snitcr.go.cr/ign_ign) y [Organismo de Investigación Judicial (OIJ)](https://sitiooij.poder-judicial.go.cr/index.php/ayuda/servicios-policiales/servicios-a-organizaciones/indice-de-transparencia-del-sector-publico-costarricense/datos-abiertos) **
+
+```{r, message=FALSE, warning=FALSE}
+cantones <-
+  cantones %>%
+  mutate(canton_regularizado = tolower(stri_trans_general(canton, id = "Latin-ASCII")))
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(canton_regularizado = tolower(stri_trans_general(Canton, id = "Latin-ASCII")))
+```
+
+```{r, message=FALSE, warning=FALSE}
+estadisticas_policiales <-
+  estadisticas_policiales%>%
+  left_join(
+    dplyr::select(
+      st_drop_geometry(cantones),
+      cod_canton,
+      canton_regularizado
+    ),
+    by = "canton_regularizado",
+    copy = FALSE,
+    keep = FALSE
+  )
+```
+
+```{r, message=FALSE, warning=FALSE}
+delitos_canton <-
+  estadisticas_policiales %>%
+  count(cod_canton, name = "estadisticas_policiales")
+cantones_delitos <-
+  cantones %>%
+  left_join(
+    delitos_canton,
+    by = "cod_canton",
+    copy = FALSE,
+    keep = FALSE
+  )
+```
+
+```{r, paleta_color, message=FALSE, warning=FALSE}
+colores_delitos <-
+  colorNumeric(palette = "Blues",
+               domain = cantones_delitos$delitos,
+               na.color = "transparent")
+```
+
+```{r, mapa_coropletas, message=FALSE, warning=FALSE}
+leaflet() %>%
+  setView(
+    lng = -84.19452,
+    lat = 9.572735,
+    zoom = 7) %>%
+  addTiles(group = "OpenStreetMap") %>% 
+  addPolygons(
+    data = cantones_delitos,
+    fillColor = ~ colores_delitos(cantones_delitos$estadisticas_policiales),
+    fillOpacity = 0.8,
+    color = "black",
+    stroke = TRUE,
+    weight = 1.0,
+    popup = paste(
+      paste(
+        "<strong>Cantón:</strong>",
+        cantones_delitos$canton
+      ),
+      paste(
+        "<strong>Delitos:</strong>",
+        cantones_delitos$estadisticas_policiales
+      ),
+      sep = '<br/>'
+    ),
+    group = "Delitos en cantones"
+  ) %>%
+  addLayersControl(
+    # control de capas
+    baseGroups = c("OpenStreetMap"),
+    overlayGroups = c("Delitos en cantones")
+  ) %>%
+  addLegend(
+    # leyenda
+    position = "bottomleft",
+    pal = colores_delitos,
+    values = cantones_delitos$estadisticas_policiales,
+    group = "Delitos",
+    title = "Cantidad de delitos"
+  )
+```
+
+Column {data-width=150}
+----------------------------------------------------------------------
+
+### Tabla
+
+```{r, message=FALSE, warning=FALSE}
+
+estadisticas_policiales %>%
+  dplyr::select(Delito,Fecha,
+                Victima, 
+                Edad, 
+                Genero, 
+                Provincia, 
+                Canton,
+                ) %>%
+  datatable(
+    options = list(
+      pageLength = 10,
+     Language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json')
+    ),
+    colnames = c(
+      "Delito",
+      "Fecha",
+      "Víctima",
+      "Edad",
+      "Género",
+      "Provincia",
+      "Cantón"
+    )
+  )
+```
+
+
+
+Column {data-width=150}
+-----------------------------------------------------------------------
+
+### Gráfico de cantones con mayor área
+
+```{r grafico}
+grafico_por_tipo_de_delito <-
+  estadisticas_policiales %>%
+  count(Delito) %>%
+  ggplot(aes(x = reorder(Delito, n), y = n)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Delitos por tipo ") +
+  xlab("Tipo de delito") +
+  ylab("Cantidad") +
+  coord_flip() +
+  theme_minimal()
+
+ggplotly(grafico_por_tipo_de_delito)
+```
+
+### Gráficos de delitos por mes
+
+```{r Delitos_por_mes}
+Estadisticas <-
+estadisticas_policiales %>%
+mutate(fecha = lubridate::month(Fecha))
+mes <-c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre")
+```
+```{r}
+Delitos_por_mes <-
+  Estadisticas%>%
+  count(fecha) %>%
+  ggplot(level =level_order,(aes(x = reorder(mes, fecha), y = n)))  +
+  geom_bar(stat = "identity") +
+  ggtitle("Delitos durante el año 2021") +
+  xlab("Mes") +
+  ylab("Cantidad de delitos") +
+  theme_minimal()
+ggplotly(Delitos_por_mes)
+```
+
+Column {data-width=140}
+-----------------------------------------------------------------------
+
+### Gráfico de delitos por género
+
+```{r Delitos por género}
+delitos_por_genero <-
+  estadisticas_policiales %>%
+  ggplot(aes(x = Delito, fill = Genero)) +
+  geom_bar(position = "fill") +
+  ggtitle("Delito por género") +
+  xlab("Delito") +
+  ylab("Cantidad") +
+  labs(fill = "Género") +
+  coord_flip() +
+  theme_minimal()+
+  scale_fill_manual(values = c("#0F0F0F", "#4209ED", "#FF0A6CB3"))
+ggplotly(delitos_por_genero) %>% config(locale = 'es')
+```
+
+### Grafico por cantidad de delitos en los cantones de San José, Heredia, Cartago y Alajuela
+
+```{r Delitos por cantones}
+Delitos_por_cantones <-
+  estadisticas_policiales %>%
+  count(Canton) %>%
+  filter(Canton == "SAN JOSE" |
+           Canton == "ALAJUELA" |
+           Canton == "CARTAGO" | Canton == "HEREDIA") %>%
+  ggplot(aes(x = reorder(Canton, n), y = n)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Delitos en los Cantones de San José, Alajuela, Cartago y Heredia") +
+  xlab("Cantón") +
+  ylab("Cantidad") +
+  coord_flip() +
+  theme_minimal()
+  
+ggplotly(Delitos_por_cantones)
+```
